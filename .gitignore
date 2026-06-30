@@ -1,0 +1,26 @@
+# virtual environment — never commit this
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# pytest cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# editor artifacts
+.DS_Store
+.idea/
+*.swp
+*.swo
+
+# environment variables (if you ever add them)
+.env
+.env.*
+
+# model cache — downloads automatically on first run, no need to commit
+~/.cache/huggingface/
