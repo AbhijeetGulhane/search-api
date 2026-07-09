@@ -1,0 +1,77 @@
+[
+  {
+    "id": 1,
+    "term": "SLO",
+    "definition": "Service Level Objective. A target value for a service reliability metric, such as availability or latency. SLOs define the expected level of service and form the basis of error budgets."
+  },
+  {
+    "id": 2,
+    "term": "SLI",
+    "definition": "Service Level Indicator. A quantitative measure of a service attribute, such as request success rate, latency percentile, or throughput. SLIs are the metrics that SLOs are defined against."
+  },
+  {
+    "id": 3,
+    "term": "Error Budget",
+    "definition": "The amount of unreliability permitted by an SLO. Calculated as 1 minus the SLO target. A 99.9% availability SLO gives 43.2 minutes of downtime budget per month. Consumed by outages, deployments, and experiments."
+  },
+  {
+    "id": 4,
+    "term": "Toil",
+    "definition": "Manual, repetitive, automatable operational work that scales linearly with service growth and provides no enduring value. SRE teams aim to keep toil below 50% of working time."
+  },
+  {
+    "id": 5,
+    "term": "Postmortem",
+    "definition": "A blameless written record of an incident that documents the timeline, root cause, impact, and action items. The goal is learning and prevention, not assigning blame."
+  },
+  {
+    "id": 6,
+    "term": "Circuit Breaker",
+    "definition": "A reliability pattern that prevents cascading failures by stopping requests to a failing service. Has three states: Closed (normal), Open (failing fast), and Half-Open (probing recovery)."
+  },
+  {
+    "id": 7,
+    "term": "Four Golden Signals",
+    "definition": "The four key metrics for monitoring a service: Latency (how long requests take), Traffic (how much demand), Errors (rate of failed requests), and Saturation (how full the service is)."
+  },
+  {
+    "id": 8,
+    "term": "OOM Killer",
+    "definition": "The Linux kernel mechanism that terminates processes when the system or a cgroup runs out of memory. Sends SIGKILL to the process with the highest badness score. In Kubernetes, a container exceeding its memory limit triggers the cgroup-scoped OOM killer."
+  },
+  {
+    "id": 9,
+    "term": "CFS Scheduler",
+    "definition": "Completely Fair Scheduler. The Linux default process scheduler that uses virtual runtime to give each process a proportional share of CPU time. CPU limits in Kubernetes are enforced via CFS bandwidth throttling."
+  },
+  {
+    "id": 10,
+    "term": "Pod Disruption Budget",
+    "definition": "A Kubernetes policy that limits voluntary disruptions to a set of pods. Ensures a minimum number of pods remain available during node drains, cluster autoscaler events, and rolling updates."
+  },
+  {
+    "id": 11,
+    "term": "HorizontalPodAutoscaler",
+    "definition": "A Kubernetes controller that automatically scales the number of pod replicas based on observed CPU utilization or custom metrics. Uses a proportional control loop running every 15 seconds."
+  },
+  {
+    "id": 12,
+    "term": "etcd",
+    "definition": "A distributed key-value store built on the Raft consensus algorithm. The single source of truth for all Kubernetes cluster state. Only kube-apiserver communicates with etcd directly."
+  },
+  {
+    "id": 13,
+    "term": "Readiness Probe",
+    "definition": "A Kubernetes health check that determines if a container is ready to receive traffic. Failure removes the pod IP from Service endpoints. Does not restart the container, unlike a liveness probe."
+  },
+  {
+    "id": 14,
+    "term": "USE Method",
+    "definition": "A performance analysis methodology by Brendan Gregg. For every resource, check Utilization, Saturation, and Errors. Systematically identifies bottlenecks in CPU, memory, disk, and network."
+  },
+  {
+    "id": 15,
+    "term": "mTLS",
+    "definition": "Mutual TLS. An extension of TLS where both client and server present certificates and verify each other's identity. Used in service meshes like Istio for zero-trust service-to-service authentication."
+  }
+]
