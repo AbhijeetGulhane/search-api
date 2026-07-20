@@ -4,7 +4,7 @@ metadata:
   name: search-api
   namespace: search-sre
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: search-api
@@ -19,9 +19,10 @@ spec:
         imagePullPolicy: Never
         ports:
         - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: search-api-config    # MODEL_NAME comes from here
         env:
-        - name: MODEL_NAME
-          value: "all-MiniLM-L6-v2"
         - name: OMP_NUM_THREADS
           value: "1"
         - name: TOKENIZERS_PARALLELISM

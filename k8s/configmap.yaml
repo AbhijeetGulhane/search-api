@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: search-api-config
+  namespace: search-sre
+data:
+  MODEL_NAME: "all-MiniLM-L6-v2"
