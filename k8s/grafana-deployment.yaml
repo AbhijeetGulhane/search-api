@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:11.1.0
+        ports:
+        - containerPort: 3000
+        env:
+        # Anonymous access — no login required for local dev.
+        # In production: remove these and configure proper auth.
+        - name: GF_AUTH_ANONYMOUS_ENABLED
+          value: "true"
+        - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+          value: "Admin"
+        # Disable login form entirely — anonymous admin access.
+        - name: GF_AUTH_DISABLE_LOGIN_FORM
+          value: "true"
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+        volumeMounts:
+        - name: storage
+          mountPath: /var/lib/grafana
+      volumes:
+      # emptyDir: dashboard data is ephemeral — lost on pod restart.
+      # Acceptable for dev; use PersistentVolumeClaim in production.
+      - name: storage
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  selector:
+    app: grafana
+  ports:
+  - port: 3000
+    targetPort: 3000
+  type: ClusterIP
