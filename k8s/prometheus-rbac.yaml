@@ -1,14 +1,39 @@
+# Prometheus RBAC — enables Kubernetes service discovery
+#
+# Three objects work together:
+#   1. Namespace      — where Prometheus runs (monitoring)
+#   2. ServiceAccount — Prometheus's identity in the cluster
+#   3. ClusterRole    — what that identity is allowed to do
+#   4. ClusterRoleBinding — connects identity to permissions
+#
+# See docs/RBAC.md for the complete authorization flow and security analysis.
+
 apiVersion: v1
 kind: Namespace
 metadata:
   name: monitoring
+  labels:
+    app: prometheus
 ---
+# ServiceAccount: the identity that Prometheus runs as.
+# K8s automatically mounts a signed JWT token for this SA into the pod at:
+#   /var/run/secrets/kubernetes.io/serviceaccount/token
+# Prometheus reads this token and uses it to authenticate against the K8s API.
+# On its own, this SA has zero permissions — ClusterRoleBinding grants them.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: prometheus
   namespace: monitoring
 ---
+# ClusterRole: defines what the prometheus ServiceAccount is ALLOWED to do.
+# Kubernetes RBAC is deny-by-default — unlisted actions are forbidden.
+# Scope: cluster-wide (all namespaces) — needed to discover pods in search-sre.
+#
+# Principle of least privilege:
+#   ✅ get/list/watch pods, services, endpoints, nodes — for service discovery
+#   ❌ create, delete, update, patch — explicitly not granted
+#   → A compromised Prometheus can read metadata, not modify workloads
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -16,19 +41,31 @@ metadata:
 rules:
 - apiGroups: [""]
   resources:
-  - nodes
-  - nodes/proxy
-  - services
-  - endpoints
-  - pods
+  - nodes           # node metadata for node-level metrics
+  - nodes/proxy     # proxy to kubelet /metrics endpoint
+  - services        # service discovery
+  - endpoints       # endpoint IPs for scraping
+  - pods            # pod discovery (primary target for search-api)
   verbs: ["get", "list", "watch"]
+    # get:   read a specific resource by name
+    # list:  enumerate all resources of this type
+    # watch: stream changes in real-time (keeps scrape targets up to date)
+
 - apiGroups: ["extensions", "networking.k8s.io"]
   resources:
-  - ingresses
+  - ingresses       # ingress discovery for future use
   verbs: ["get", "list", "watch"]
+
 - nonResourceURLs: ["/metrics"]
-  verbs: ["get"]
+  verbs: ["get"]    # scrape /metrics on discovered targets
 ---
+# ClusterRoleBinding: the connection between identity and permissions.
+# Without this, both the ServiceAccount and ClusterRole exist independently
+# but have no relationship — the SA still has zero permissions.
+#
+# This binding says:
+#   "Grant the prometheus ClusterRole to the prometheus ServiceAccount
+#    in the monitoring namespace, cluster-wide."
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -36,8 +73,8 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: prometheus
+  name: prometheus          # must match ClusterRole name above
 subjects:
 - kind: ServiceAccount
-  name: prometheus
-  namespace: monitoring
+  name: prometheus          # must match ServiceAccount name above
+  namespace: monitoring     # must match ServiceAccount namespace above

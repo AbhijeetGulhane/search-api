@@ -4,47 +4,111 @@ metadata:
   name: search-api
   namespace: search-sre
 spec:
+  # 3 replicas: minimum for meaningful HA. Tolerates 1 pod failure (2 remain
+  # serving) and a rolling update (1 unavailable at a time, 2 still serving).
+  # Chosen after Day 7 chaos test showed single-replica = 36s outage per failure.
   replicas: 3
+
   selector:
     matchLabels:
-      app: search-api
+      app: search-api   # must match template.metadata.labels below
+
   template:
     metadata:
       labels:
-        app: search-api
+        app: search-api   # used by Service selector and Prometheus SD relabel_configs
+
     spec:
       containers:
       - name: search-api
         image: search-api:v1
+
+        # Never: use image from Minikube's local Docker daemon.
+        # Without this, kubelet tries to pull from Docker Hub → ErrImagePull.
+        # Change to IfNotPresent when pushing to a real registry (Day 14+).
         imagePullPolicy: Never
+
         ports:
-        - containerPort: 8000
+        - containerPort: 8000   # uvicorn listens here; Service maps 8080 → 8000
+
+        # MODEL_NAME and any future config keys come from the ConfigMap.
+        # envFrom injects ALL keys — adding new keys to the ConfigMap requires
+        # no changes to this deployment spec.
         envFrom:
         - configMapRef:
-            name: search-api-config    # MODEL_NAME comes from here
+            name: search-api-config
+
         env:
+        # OMP_NUM_THREADS=1: prevents PyTorch from spawning a thread pool.
+        # Without this, PyTorch spawns one thread per CPU core for BLAS operations.
+        # In WSL2/Minikube, multi-threaded PyTorch causes segfaults (C++ crash).
+        # In production K8s, this also prevents CPU throttling bursts from the
+        # thread pool consuming the entire CPU limit in a short window.
         - name: OMP_NUM_THREADS
           value: "1"
+
+        # TOKENIZERS_PARALLELISM=false: disables HuggingFace tokenizer parallelism.
+        # The tokenizer spawns background processes for parallel tokenization.
+        # In containerized environments this causes fork/exec issues.
         - name: TOKENIZERS_PARALLELISM
           value: "false"
+
         resources:
           requests:
+            # 250m = 0.25 CPU cores. Used by the scheduler for placement decisions.
+            # The node's allocatable CPU is divided by requests to determine capacity.
+            # 3 pods × 250m = 750m total requested — scheduler sees this headroom.
             cpu: "250m"
+
+            # 512Mi: the model uses ~509MB confirmed by `docker stats`.
+            # Requests represent the guaranteed minimum under node saturation.
+            # Also used by HPA for CPU utilization calculations (actual/request).
             memory: "512Mi"
+
           limits:
+            # 1000m = 1 CPU core. Enforced by CFS bandwidth throttling (cpu.max).
+            # If the container exceeds 1000m in a 100ms period, it's throttled
+            # (pulled off the run queue) until the next period — not killed.
+            # Set 4x the request to allow burst without constant throttling.
             cpu: "1000m"
+
+            # 700Mi: ~190MB headroom above the 509MB model baseline.
+            # Enforced by cgroup memory.max. Exceeding this triggers the
+            # cgroup-scoped OOM killer → SIGKILL → exit code 137 → OOMKilled.
+            # Tight enough to prevent runaway growth, loose enough for normal traffic.
             memory: "700Mi"
+
+        # Readiness probe: controls traffic routing.
+        # Returns 503 while model is loading, 200 after.
+        # Failure → pod IP removed from Service Endpoints → no traffic sent here.
+        # Does NOT restart the container — only affects load balancing.
         readinessProbe:
           httpGet:
             path: /readyz
             port: 8000
+
+          # Model takes ~28s to load (from Day 7 chaos test data).
+          # Wait 30s before first probe so we don't fail-fast before model loads.
           initialDelaySeconds: 30
+
+          # Probe every 10 seconds once started.
           periodSeconds: 10
+
+          # Allow 6 consecutive failures (60 seconds) before marking unready.
+          # Generous threshold handles model loading variance across restarts.
           failureThreshold: 6
+
+        # Liveness probe: controls container lifecycle (restart vs keep running).
+        # Returns 200 once uvicorn is serving. Failure → restart the container.
+        # Should NOT check external dependencies — failure = restart (can't fix DB).
         livenessProbe:
           httpGet:
             path: /healthz
             port: 8000
+
+          # Start liveness checks after 60s — after readiness has had time to pass.
+          # We never want to kill a container that's still legitimately loading.
           initialDelaySeconds: 60
+
           periodSeconds: 15
           failureThreshold: 3

@@ -6,38 +6,59 @@ metadata:
 data:
   prometheus.yml: |
     global:
+      # Scrape every 15 seconds. Controls how fresh the data is.
+      # Lower = more granular data, higher API load on K8s and scrape targets.
+      # 15s is the Prometheus default and appropriate for an SRE monitoring setup.
       scrape_interval: 15s
+
+      # How often to evaluate alerting rules (not configured yet — Day 14+).
       evaluation_interval: 15s
 
     scrape_configs:
-      # Scrape Prometheus itself
+      # Prometheus scrapes itself so you can monitor the monitor.
+      # Useful for: query duration, scrape duration, storage usage.
       - job_name: 'prometheus'
         static_configs:
           - targets: ['localhost:9090']
 
-      # Scrape search-api pods via K8s service discovery
+      # Dynamic scraping of search-api pods via Kubernetes service discovery.
+      # Prometheus calls the K8s API every scrape_interval to get current pod IPs.
+      # This is why RBAC is required — without it, the K8s API rejects the call.
       - job_name: 'search-api'
         kubernetes_sd_configs:
-          - role: pod
+          - role: pod               # discover pods (not services or nodes)
             namespaces:
               names:
-                - search-sre
+                - search-sre        # only look in this namespace
+
+        # relabel_configs: filter and transform discovered targets.
+        # Prometheus discovers ALL pods in search-sre first, then applies these rules.
         relabel_configs:
-          # Only scrape pods with label app=search-api
+          # Rule 1: FILTER — only keep pods with label app=search-api.
+          # Without this, Prometheus would try to scrape ALL pods in the namespace,
+          # including kube-system pods that may not have a /metrics endpoint.
           - source_labels: [__meta_kubernetes_pod_label_app]
             action: keep
             regex: search-api
-          # Use port 8000 (the container port)
+
+          # Rule 2: TRANSFORM — override the scrape address to use port 8000.
+          # K8s SD sets __address__ to the pod IP with no port, or a random port.
+          # This regex extracts just the IP and appends :8000 where uvicorn listens.
           - source_labels: [__address__]
             action: replace
             regex: ([^:]+)(?::\d+)?
             replacement: $1:8000
             target_label: __address__
-          # Add pod name as a label on every metric
+
+          # Rule 3: ENRICH — add the pod name as a label on every metric.
+          # Without this, all 3 pods' metrics merge into indistinguishable series.
+          # With this, you can query: search_api_requests_total{pod="search-api-xxx"}
+          # and see per-pod traffic independently.
           - source_labels: [__meta_kubernetes_pod_name]
             action: replace
             target_label: pod
-          # Add namespace as a label
+
+          # Rule 4: ENRICH — add namespace as a label for multi-namespace setups.
           - source_labels: [__meta_kubernetes_namespace]
             action: replace
             target_label: namespace
