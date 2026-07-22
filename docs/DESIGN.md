@@ -454,3 +454,121 @@ kubectl auth can-i delete pods \
   -n search-sre
 # → no
 ```
+## Day 11 — Grafana Dashboard (`k8s/grafana-deployment.yaml`)
+
+### Why Grafana over the Prometheus built-in UI?
+
+Prometheus's `/graph` UI is functional but limited — single queries, no multi-panel
+layouts, no persistent dashboards, no threshold lines. Grafana provides:
+- Multi-panel dashboards that persist across sessions
+- Visual threshold lines (e.g. the 300ms SLO boundary on p99 latency)
+- Per-series coloring and legend labels
+- Time range selection and auto-refresh
+- Dashboard sharing via JSON export
+
+For an SRE interview, a Grafana screenshot showing the four golden signals on one
+screen is significantly more impactful than a Prometheus expression box.
+
+### Why anonymous admin access?
+
+```yaml
+- name: GF_AUTH_ANONYMOUS_ENABLED
+  value: "true"
+- name: GF_AUTH_ANONYMOUS_ORG_ROLE
+  value: "Admin"
+- name: GF_AUTH_DISABLE_LOGIN_FORM
+  value: "true"
+```
+
+Local development only — eliminates the friction of managing credentials in a
+non-production environment. In production, remove these three env vars and configure
+proper authentication (LDAP, OAuth, or Grafana's built-in user management).
+
+The tradeoff is deliberate: development velocity vs security. These settings would
+never appear in a production deployment.
+
+### Why emptyDir for storage?
+
+Grafana stores dashboards in a SQLite database at `/var/lib/grafana`. An `emptyDir`
+volume persists this data as long as the pod is running but loses it on pod restart.
+
+For development, this is acceptable — dashboards can be recreated in minutes.
+For production, a `PersistentVolumeClaim` (PVC) backed by a cloud storage class
+would preserve dashboards across pod restarts and node replacements.
+
+Not using a PVC here keeps the setup simple and avoids StorageClass configuration
+in Minikube, which varies by cluster configuration.
+
+### Why grafana/grafana:11.1.0 (pinned version)?
+
+Pinned to a specific version rather than `latest` for reproducibility. `latest`
+changes when Grafana releases a new version — what works today may break tomorrow
+if a new version changes a default setting or API. Pinning ensures the deployment
+is reproducible: the same YAML produces the same result next week, next month.
+
+In production, pinned versions also make vulnerability scanning tractable —
+you know exactly what you're running.
+
+### Why prometheus.monitoring.svc.cluster.local as the datasource URL?
+
+Grafana and Prometheus both run in the `monitoring` namespace. Kubernetes DNS
+provides a predictable hostname for any Service:
+```
+<service-name>.<namespace>.svc.cluster.local:<port>
+```
+
+This is preferable to:
+- `localhost:9090` — would look for Prometheus inside the Grafana container, not a separate pod
+- A ClusterIP address — IPs change when Services are recreated; the DNS name is stable
+- A NodePort — exposes Prometheus externally, unnecessary for internal communication
+
+### The Three Panels — PromQL Explained
+
+**Panel 1: Request Rate (Traffic golden signal)**
+```
+rate(search_api_requests_total[1m])
+```
+`rate()` computes the per-second rate of increase of a counter over the last 1 minute.
+Counters only go up — `rate()` handles resets (pod restarts) gracefully by detecting
+when a counter drops and treating it as a reset to zero.
+
+Result: multiple time series, one per {endpoint, pod} combination. Shows traffic
+distribution across pods and endpoints simultaneously.
+
+**Panel 2: p99 Latency (Latency golden signal)**
+```
+histogram_quantile(0.99,
+  sum by (le) (rate(search_api_request_latency_seconds_bucket[1m]))
+)
+```
+Breaking this down inside-out:
+- `rate(..._bucket[1m])`: per-second rate of observations falling into each bucket
+- `sum by (le)`: aggregate across all pods (summing bucket counts is valid for histograms)
+- `histogram_quantile(0.99, ...)`: compute the 99th percentile from the aggregated buckets
+
+The `sum by (le)` is critical — it correctly merges histograms from all 3 pods into
+one fleet-wide p99. This is why we chose histogram over summary: summaries from
+different pods cannot be meaningfully summed.
+
+Observed: ~10ms for probe traffic, 300–500ms for search queries.
+The 300ms SLO threshold line makes violations immediately visible.
+
+**Panel 3: Error Rate (Errors golden signal)**
+```
+rate(search_api_requests_total{status=~"5.."}[1m])
+```
+`status=~"5.."` is a regex label matcher — matches any status starting with 5
+(500, 503, 504, etc.). "No data" is the correct and desired state — it means
+zero server errors in the observed window.
+
+The panel is correctly configured even with no data. When errors occur (overload,
+dependency failure, bug), this panel immediately shows the rate.
+
+### What the Dashboard Proved
+
+- Request Rate panel showed 3 separate `/healthz` lines — one per pod — confirming
+  the `pod` label from Day 10's relabel_configs is working correctly
+- p99 Latency confirmed ~10ms for probes, consistent with pure in-memory health checks
+- Error Rate showing "No data" confirmed zero 5xx responses across all pods
+- All four golden signals now visible in one dashboard: Traffic ✅ Latency ✅
+  Errors ✅ Saturation (from K8s cAdvisor, visible in Grafana's built-in K8s dashboards)

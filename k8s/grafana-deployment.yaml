@@ -2,46 +2,72 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: grafana
-  namespace: monitoring
+  namespace: monitoring   # same namespace as Prometheus — clean separation from app
 spec:
+  # Single replica: Grafana is a dashboard tool, not a data store.
+  # The actual metrics data lives in Prometheus. Grafana just visualizes it.
+  # Losing Grafana briefly = no dashboards, not data loss.
   replicas: 1
+
   selector:
     matchLabels:
       app: grafana
+
   template:
     metadata:
       labels:
         app: grafana
+
     spec:
       containers:
       - name: grafana
+        # Pinned version for reproducibility — never use 'latest' in K8s manifests.
+        # 'latest' changes unpredictably; a new version could break dashboards.
         image: grafana/grafana:11.1.0
+
         ports:
-        - containerPort: 3000
+        - containerPort: 3000   # Grafana's default HTTP port
+
         env:
-        # Anonymous access — no login required for local dev.
-        # In production: remove these and configure proper auth.
+        # ── Authentication: anonymous admin access ──────────────────────────
+        # LOCAL DEVELOPMENT ONLY. Remove all three for production.
+        # In production: configure LDAP, OAuth, or Grafana's built-in user auth.
+
+        # Allow unauthenticated access to Grafana.
         - name: GF_AUTH_ANONYMOUS_ENABLED
           value: "true"
+
+        # Give anonymous users admin rights — can create/edit dashboards.
+        # Without Admin role, anonymous users can only view.
         - name: GF_AUTH_ANONYMOUS_ORG_ROLE
           value: "Admin"
-        # Disable login form entirely — anonymous admin access.
+
+        # Hide the login form entirely — no credentials to manage in dev.
         - name: GF_AUTH_DISABLE_LOGIN_FORM
           value: "true"
+
         resources:
           requests:
+            # Grafana is a Go binary + SQLite — very lightweight.
+            # 100m CPU and 128Mi memory is generous for a dev instance.
             cpu: "100m"
             memory: "128Mi"
           limits:
             cpu: "200m"
             memory: "256Mi"
+
         volumeMounts:
         - name: storage
+          # Grafana stores its SQLite database here (dashboards, datasources,
+          # users, settings). Must be writable by the Grafana process.
           mountPath: /var/lib/grafana
+
       volumes:
-      # emptyDir: dashboard data is ephemeral — lost on pod restart.
-      # Acceptable for dev; use PersistentVolumeClaim in production.
       - name: storage
+        # emptyDir: created fresh when the pod starts, deleted when it stops.
+        # Dashboards are lost on pod restart — acceptable for development.
+        # For production: replace with a PersistentVolumeClaim so dashboards
+        # survive pod restarts, node replacements, and cluster upgrades.
         emptyDir: {}
 ---
 apiVersion: v1
@@ -55,4 +81,7 @@ spec:
   ports:
   - port: 3000
     targetPort: 3000
+  # ClusterIP: Grafana is only accessed via kubectl port-forward in dev.
+  # No need to expose it externally via NodePort or LoadBalancer.
+  # In production: use an Ingress with TLS termination.
   type: ClusterIP
