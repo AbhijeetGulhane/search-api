@@ -4,29 +4,66 @@ metadata:
   name: search-api-hpa
   namespace: search-sre
 spec:
+  # The Deployment to scale. HPA adjusts spec.replicas on this object.
+  # HPA and manual kubectl scale commands conflict — HPA always wins at next sync.
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
     name: search-api
+
+  # minReplicas: 2 — never scale below 2 pods.
+  # Why 2 and not 1: single pod = single point of failure (Postmortem #1).
+  # Why 2 and not 3: HPA reclaims one pod's resources during low traffic.
+  # 3 was the fixed count before HPA; now HPA manages between 2 and 6.
   minReplicas: 2
+
+  # maxReplicas: 6 — never scale above 6 pods.
+  # 6 × 250m CPU request = 1500m total. Leaves headroom for system pods
+  # and Prometheus/Grafana on the 4-CPU Minikube node.
+  # In production: set based on cost budget and expected peak load.
   maxReplicas: 6
+
   metrics:
   - type: Resource
     resource:
       name: cpu
       target:
         type: Utilization
+        # Target 50% of the CPU request (250m × 50% = 125m per pod).
+        # HPA scaling formula: desiredReplicas = ceil(current × actual/target)
+        # Example: ceil(2 × 174%/50%) = ceil(6.96) = 7, capped at maxReplicas=6
+        #
+        # 50% leaves a 2x buffer for traffic spikes between HPA sync cycles (15s).
+        # A target of 90% would leave almost no headroom — a sudden spike could
+        # saturate all pods before the next scale-up fires.
         averageUtilization: 50
+
   behavior:
     scaleUp:
+      # 0s: scale up immediately when CPU exceeds threshold.
+      # Users are waiting right now — don't add delay waiting for "stable" high CPU.
       stabilizationWindowSeconds: 0
+
       policies:
+      # Add at most 2 pods per 15-second window.
+      # Prevents adding all pods at once when a spike hits — gives new pods
+      # time to start and begin serving before adding more.
       - type: Pods
         value: 2
         periodSeconds: 15
+
     scaleDown:
+      # Wait 60 seconds of sustained low CPU before scaling down.
+      # Prevents thrashing: a brief traffic lull followed by a spike would
+      # cause immediate scale-down then immediate scale-up. The 60s window
+      # ensures the load is actually gone before releasing capacity.
       stabilizationWindowSeconds: 60
+
       policies:
+      # Remove at most 1 pod per 30-second window.
+      # Gradual scale-down gives the service time to rebalance traffic after
+      # each pod removal. Prevents a sudden capacity cliff if traffic resumes
+      # during the scale-down period.
       - type: Pods
         value: 1
         periodSeconds: 30
