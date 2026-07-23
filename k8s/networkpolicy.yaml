@@ -1,0 +1,46 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: search-api-netpol
+  namespace: search-sre
+spec:
+  # Apply this policy to all pods with label app=search-api
+  podSelector:
+    matchLabels:
+      app: search-api
+
+  policyTypes:
+  - Ingress
+  - Egress
+
+  ingress:
+  # Rule 1: Allow traffic from within the same namespace (search-sre).
+  # Covers: kubectl port-forward, inter-pod communication.
+  - from:
+    - podSelector: {}   # any pod in search-sre namespace
+
+  # Rule 2: Allow traffic from the monitoring namespace (Prometheus scraping).
+  # Without this, Prometheus can't reach /metrics on search-api pods.
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+
+  egress:
+  # Rule 1: Allow DNS resolution (kube-dns on port 53).
+  # Without this, the model can't resolve hostnames (HuggingFace CDN, etc.).
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+
+  # Rule 2: Allow outbound HTTPS (port 443).
+  # Needed for: model download from HuggingFace CDN on first pod start.
+  - ports:
+    - port: 443
+      protocol: TCP
+
+  # Rule 3: Allow communication within search-sre namespace.
+  - to:
+    - podSelector: {}
