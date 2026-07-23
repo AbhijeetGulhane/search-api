@@ -243,7 +243,7 @@ python -m pytest tests/ -v
 
 - [x] Day 10 — Prometheus scraping pod metrics via RBAC
 - [x] Day 11 — Grafana dashboard: request rate, p99 latency, error rate
-- [ ] Day 12 — NetworkPolicy (restrict traffic to namespace) + RBAC validation
+- [x] Day 12 — NetworkPolicy (restrict traffic to namespace) + RBAC validation
 - [ ] Day 13 — HPA: auto-scale on CPU, load test with `load_test/loadgen.py`
 - [ ] Day 14 — GitHub Actions CI, Postmortem #2, tag v1.0
 

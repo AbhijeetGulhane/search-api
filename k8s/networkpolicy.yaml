@@ -1,46 +1,75 @@
+# NetworkPolicy for search-api pods
+#
+# Purpose: restrict ingress and egress traffic to/from search-api pods.
+# Kubernetes default: all pod-to-pod traffic allowed (flat network model).
+# This policy implements least privilege at the network layer.
+#
+# See docs/DESIGN.md (Day 12) for full threat model and rule rationale.
+
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: search-api-netpol
-  namespace: search-sre
+  namespace: search-sre    # policy applies to pods in this namespace only
 spec:
-  # Apply this policy to all pods with label app=search-api
+  # Apply this policy to all pods matching this selector.
+  # Only search-api pods (label app=search-api) are affected.
+  # Other pods in search-sre (if any) are unaffected.
   podSelector:
     matchLabels:
       app: search-api
 
+  # Specify BOTH directions — otherwise the unspecified direction remains open.
+  # Ingress only = outbound traffic unrestricted (lateral movement risk).
+  # Egress only  = inbound traffic unrestricted.
+  # Both         = complete network posture control.
   policyTypes:
   - Ingress
   - Egress
 
   ingress:
-  # Rule 1: Allow traffic from within the same namespace (search-sre).
-  # Covers: kubectl port-forward, inter-pod communication.
+  # ── Rule 1: Allow inbound traffic from within search-sre namespace ────────
+  # podSelector: {} with no namespaceSelector = any pod in THIS namespace.
+  # Covers: kubectl port-forward, future intra-namespace services.
   - from:
-    - podSelector: {}   # any pod in search-sre namespace
+    - podSelector: {}
 
-  # Rule 2: Allow traffic from the monitoring namespace (Prometheus scraping).
-  # Without this, Prometheus can't reach /metrics on search-api pods.
+  # ── Rule 2: Allow inbound traffic from monitoring namespace ───────────────
+  # Required for Prometheus to scrape /metrics on port 8000.
+  # Without this rule, Prometheus scrape requests are silently dropped
+  # and targets show as DOWN in http://localhost:9090/targets.
+  #
+  # kubernetes.io/metadata.name is automatically added to every namespace
+  # by Kubernetes — its value equals the namespace name. Standard way to
+  # select a namespace by name in NetworkPolicy.
   - from:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: monitoring
 
   egress:
-  # Rule 1: Allow DNS resolution (kube-dns on port 53).
-  # Without this, the model can't resolve hostnames (HuggingFace CDN, etc.).
+  # ── Rule 1: Allow DNS resolution ─────────────────────────────────────────
+  # kube-dns listens on port 53. Required for:
+  # - Resolving K8s service names (kubernetes.default.svc.cluster.local)
+  # - Resolving external hostnames (HuggingFace CDN for model download)
+  # Both UDP (default DNS) and TCP (fallback for large responses) required.
   - ports:
     - port: 53
       protocol: UDP
     - port: 53
       protocol: TCP
 
-  # Rule 2: Allow outbound HTTPS (port 443).
-  # Needed for: model download from HuggingFace CDN on first pod start.
+  # ── Rule 2: Allow outbound HTTPS ─────────────────────────────────────────
+  # Required for model download from HuggingFace CDN on first pod start.
+  # sentence-transformers downloads all-MiniLM-L6-v2 (~80MB) via HTTPS.
+  # Without this, the model download is blocked → pod fails to start.
+  # In a fully air-gapped environment: bake model into image, remove this rule.
   - ports:
     - port: 443
       protocol: TCP
 
-  # Rule 3: Allow communication within search-sre namespace.
+  # ── Rule 3: Allow outbound traffic within search-sre namespace ───────────
+  # Allows search-api pods to reach future intra-namespace services
+  # (caching layer, feature flags, etc.) without NetworkPolicy updates.
   - to:
     - podSelector: {}
